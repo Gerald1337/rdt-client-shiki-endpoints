@@ -1,3 +1,9 @@
+# To run:
+- cd client && npm install
+- (root) .localdata may need to be updated
+- cd server
+- dotnet run --project RdtClient.Web  
+
 # Real-Debrid Torrent & Usenet Client
 
 This is a web interface to manage your torrents on Real-Debrid, AllDebrid, Premiumize TorBox or DebridLink. It supports the following features:

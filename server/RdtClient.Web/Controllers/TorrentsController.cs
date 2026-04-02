@@ -2,6 +2,7 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using MonoTorrent;
+using RdtClient.Data.Enums;
 using RdtClient.Data.Models.DebridClient;
 using RdtClient.Data.Models.Internal;
 using RdtClient.Service.BackgroundServices;
@@ -15,6 +16,21 @@ namespace RdtClient.Web.Controllers;
 [Route("Api/Torrents")]
 public class TorrentsController(ILogger<TorrentsController> logger, Torrents torrents, TorrentRunner torrentRunner, IRateLimitCoordinator coordinator) : Controller
 {
+    [HttpGet]
+    [AllowAnonymous]
+    [Route("Queue/Public")]
+    public async Task<ActionResult<IList<PublicTorrentQueueItemDto>>> GetPublicQueue()
+    {
+        var results = await torrents.Get();
+
+        var queue = results.Where(IsPublicQueueCandidate)
+                           .Select(MapPublicQueueItem)
+                           .OrderBy(item => item.Name)
+                           .ToList();
+
+        return Ok(queue);
+    }
+
     [HttpGet]
     [Route("")]
     public async Task<ActionResult<IList<TorrentDto>>> GetAll()
@@ -525,6 +541,70 @@ public class TorrentsController(ILogger<TorrentsController> logger, Torrents tor
             excludeError,
             selectedFiles
         });
+    }
+
+    private static Boolean IsPublicQueueCandidate(Torrent torrent)
+    {
+        return torrent.Completed == null && String.IsNullOrWhiteSpace(torrent.Error);
+    }
+
+    private PublicTorrentQueueItemDto MapPublicQueueItem(Torrent torrent)
+    {
+        var downloadStats = torrent.Downloads.Select(download =>
+                                     {
+                                         var (speed, bytesTotal, bytesDone) = torrents.GetDownloadStats(download.DownloadId);
+
+                                         return new DownloadDto
+                                         {
+                                             DownloadId = download.DownloadId,
+                                             TorrentId = download.TorrentId,
+                                             Path = download.Path,
+                                             Link = download.Link,
+                                             Added = download.Added,
+                                             DownloadQueued = download.DownloadQueued,
+                                             DownloadStarted = download.DownloadStarted,
+                                             DownloadFinished = download.DownloadFinished,
+                                             UnpackingQueued = download.UnpackingQueued,
+                                             UnpackingStarted = download.UnpackingStarted,
+                                             UnpackingFinished = download.UnpackingFinished,
+                                             Completed = download.Completed,
+                                             RetryCount = download.RetryCount,
+                                             Error = download.Error,
+                                             BytesTotal = bytesTotal,
+                                             BytesDone = bytesDone,
+                                             Speed = speed
+                                         };
+                                     })
+                                     .ToList();
+
+        var activeLocalDownloads = downloadStats.Where(download => download.Completed == null && download.DownloadFinished == null && download.Error == null)
+                                                .ToList();
+
+        var allBytesTotal = downloadStats.Sum(download => download.BytesTotal);
+        var allBytesDone = downloadStats.Sum(download => download.BytesDone);
+        var hasLocalDownloadPhase = activeLocalDownloads.Any(download => download.DownloadQueued != null || download.DownloadStarted != null);
+
+        var status = hasLocalDownloadPhase || torrent.RdStatus == TorrentStatus.Finished
+            ? "Being downloaded from RealDebrid"
+            : torrent.RdStatus switch
+            {
+                TorrentStatus.Queued => "Not yet added to provider",
+                TorrentStatus.Error => $"Provider error: {torrent.RdStatusRaw ?? "Unknown"}",
+                _ => "Being downloaded by RealDebrid"
+            };
+
+        var totalSizeBytes = allBytesTotal > 0 ? allBytesTotal : torrent.RdSize ?? 0;
+        var downloadedPercent = allBytesTotal > 0
+            ? Math.Clamp(allBytesDone / (Double)allBytesTotal * 100.0, 0.0, 100.0)
+            : Math.Clamp((Double)(torrent.RdProgress ?? 0), 0.0, 100.0);
+
+        return new PublicTorrentQueueItemDto
+        {
+            Name = torrent.RdName ?? torrent.Hash,
+            TotalSizeBytes = totalSizeBytes,
+            DownloadedPercent = downloadedPercent,
+            Status = status
+        };
     }
 }
 

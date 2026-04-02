@@ -108,6 +108,10 @@ public class DbSettingsDownloadClient
     [Description("Path where files are downloaded to on your host (i.e. D:\\Downloads). This path is used for *arr to find your downloads.")]
     public String MappedPath { get; set; } = @"C:\Downloads";
 
+    [DisplayName("Global max download speed (MB/s)")]
+    [Description("Limit the combined download speed of all download clients. When set to 0 unlimited speed is used.")]
+    public Int32 GlobalMaxSpeed { get; set; } = 0;
+
     [DisplayName("Download speed (in MB/s) (only used for the Internal Downloader)")]
     [Description("Maximum download speed in Megabytes per second. When set to 0 unlimited speed is used.")]
     public Int32 MaxSpeed { get; set; } = 0;

@@ -88,7 +88,11 @@ public class DownloadClient(Download download, Torrent torrent, String destinati
 
                 LastBytesDone = BytesDone;
 
-                AddToTotalBytesDownloadedThisSession(bytesAdded);
+                if (bytesAdded > 0)
+                {
+                    GlobalDownloadSpeedLimiter.Throttle(bytesAdded);
+                    AddToTotalBytesDownloadedThisSession(bytesAdded);
+                }
             };
 
             var result = await Downloader.Download();
