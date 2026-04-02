@@ -123,6 +123,167 @@ public class TorrentsControllerPublicQueueTest
         Assert.Equal(2000, item.TotalSizeBytes);
         Assert.Equal(25, item.DownloadedPercent);
         Assert.Equal("Being downloaded from RealDebrid", item.Status);
+        Assert.Equal("Downloading", item.RawStatus);
+    }
+
+    [Fact]
+    public async Task GetPublicQueue_ReturnsWaitingToDownloadWhenProviderFinishedAndNoDownloads()
+    {
+        var torrentId = Guid.NewGuid();
+
+        _torrentsMock.Setup(t => t.Get())
+                     .ReturnsAsync([
+                         new Torrent
+                         {
+                             TorrentId = torrentId,
+                             Hash = "hash-3",
+                             RdName = "Ready Torrent",
+                             RdSize = 3000,
+                             RdProgress = 100,
+                             RdStatus = TorrentStatus.Finished
+                         }
+                     ]);
+
+        var result = await _controller.GetPublicQueue();
+
+        var okResult = Assert.IsType<OkObjectResult>(result.Result);
+        var queue = Assert.IsType<List<PublicTorrentQueueItemDto>>(okResult.Value);
+        var item = Assert.Single(queue);
+
+        Assert.Equal("Ready Torrent", item.Name);
+        Assert.Equal(3000, item.TotalSizeBytes);
+        Assert.Equal(0, item.DownloadedPercent);
+        Assert.Equal("Waiting to download", item.Status);
+        Assert.Equal("WaitingForHostDownload", item.RawStatus);
+    }
+
+    [Fact]
+    public async Task GetPublicQueue_ReturnsWaitingForDebridWhenProviderNotDownloading()
+    {
+        var torrentId = Guid.NewGuid();
+
+        _torrentsMock.Setup(t => t.Get())
+                     .ReturnsAsync([
+                         new Torrent
+                         {
+                             TorrentId = torrentId,
+                             Hash = "hash-5",
+                             RdName = "Stalled Torrent",
+                             RdSize = 5000,
+                             RdProgress = 42,
+                             RdStatus = TorrentStatus.Processing
+                         }
+                     ]);
+
+        var result = await _controller.GetPublicQueue();
+
+        var okResult = Assert.IsType<OkObjectResult>(result.Result);
+        var queue = Assert.IsType<List<PublicTorrentQueueItemDto>>(okResult.Value);
+        var item = Assert.Single(queue);
+
+        Assert.Equal("Stalled Torrent", item.Name);
+        Assert.Equal("Waiting for debrid", item.Status);
+        Assert.Equal(42, item.DownloadedPercent);
+        Assert.Equal("Processing", item.RawStatus);
+    }
+
+    [Fact]
+    public async Task GetPublicQueue_ReturnsWaitingInQueueForQueuedDownloads()
+    {
+        var torrentId = Guid.NewGuid();
+        var downloadId = Guid.NewGuid();
+
+        _torrentsMock.Setup(t => t.Get())
+                     .ReturnsAsync([
+                         new Torrent
+                         {
+                             TorrentId = torrentId,
+                             Hash = "hash-4",
+                             RdName = "Queued Torrent",
+                             RdSize = 4000,
+                             RdProgress = 100,
+                             RdStatus = TorrentStatus.Finished,
+                             Downloads =
+                             [
+                                 new Download
+                                 {
+                                     DownloadId = downloadId,
+                                     TorrentId = torrentId,
+                                     Path = "/downloads/queued.mkv",
+                                     DownloadQueued = DateTimeOffset.UtcNow
+                                 }
+                             ]
+                         }
+                     ]);
+
+        _torrentsMock.Setup(t => t.GetDownloadStats(downloadId))
+                     .Returns((0, 0, 0));
+
+        var result = await _controller.GetPublicQueue();
+
+        var okResult = Assert.IsType<OkObjectResult>(result.Result);
+        var queue = Assert.IsType<List<PublicTorrentQueueItemDto>>(okResult.Value);
+        var item = Assert.Single(queue);
+
+        Assert.Equal("Queued Torrent", item.Name);
+        Assert.Equal("Waiting in queue", item.Status);
+        Assert.Equal(0, item.DownloadedPercent);
+        Assert.Equal("QueuedForHostDownload", item.RawStatus);
+    }
+
+    [Fact]
+    public async Task GetPublicQueue_PrioritizesActiveDownloadsOverQueueStatus()
+    {
+        var torrentId = Guid.NewGuid();
+        var activeDownloadId = Guid.NewGuid();
+        var queuedDownloadId = Guid.NewGuid();
+
+        _torrentsMock.Setup(t => t.Get())
+                     .ReturnsAsync([
+                         new Torrent
+                         {
+                             TorrentId = torrentId,
+                             Hash = "hash-6",
+                             RdName = "Mixed Torrent",
+                             RdSize = 6000,
+                             RdProgress = 100,
+                             RdStatus = TorrentStatus.Finished,
+                             Downloads =
+                             [
+                                 new Download
+                                 {
+                                     DownloadId = activeDownloadId,
+                                     TorrentId = torrentId,
+                                     Path = "/downloads/active.mkv",
+                                     DownloadQueued = DateTimeOffset.UtcNow.AddMinutes(-5),
+                                     DownloadStarted = DateTimeOffset.UtcNow.AddMinutes(-3)
+                                 },
+                                 new Download
+                                 {
+                                     DownloadId = queuedDownloadId,
+                                     TorrentId = torrentId,
+                                     Path = "/downloads/queued2.mkv",
+                                     DownloadQueued = DateTimeOffset.UtcNow.AddMinutes(-1)
+                                 }
+                             ]
+                         }
+                     ]);
+
+        _torrentsMock.Setup(t => t.GetDownloadStats(activeDownloadId))
+                     .Returns((1000, 2000, 1000));
+        _torrentsMock.Setup(t => t.GetDownloadStats(queuedDownloadId))
+                     .Returns((0, 0, 0));
+
+        var result = await _controller.GetPublicQueue();
+
+        var okResult = Assert.IsType<OkObjectResult>(result.Result);
+        var queue = Assert.IsType<List<PublicTorrentQueueItemDto>>(okResult.Value);
+        var item = Assert.Single(queue);
+
+        Assert.Equal("Mixed Torrent", item.Name);
+        Assert.Equal("Being downloaded from RealDebrid", item.Status);
+        Assert.Equal(50, item.DownloadedPercent);
+        Assert.Equal("Downloading", item.RawStatus);
     }
 
     [Fact]

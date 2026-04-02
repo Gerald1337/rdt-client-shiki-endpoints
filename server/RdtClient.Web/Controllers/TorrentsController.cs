@@ -1,10 +1,12 @@
-﻿using System.Text.RegularExpressions;
+﻿using System.Text;
+using System.Text.RegularExpressions;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using MonoTorrent;
 using RdtClient.Data.Enums;
 using RdtClient.Data.Models.DebridClient;
 using RdtClient.Data.Models.Internal;
+using RdtClient.Service;
 using RdtClient.Service.BackgroundServices;
 using RdtClient.Service.Helpers;
 using RdtClient.Service.Services;
@@ -14,13 +16,19 @@ namespace RdtClient.Web.Controllers;
 
 [Authorize(Policy = "AuthSetting")]
 [Route("Api/Torrents")]
-public class TorrentsController(ILogger<TorrentsController> logger, Torrents torrents, TorrentRunner torrentRunner, IRateLimitCoordinator coordinator) : Controller
+public class TorrentsController(ILogger<TorrentsController> logger, Torrents torrents, TorrentRunner torrentRunner, IRateLimitCoordinator coordinator, Authentication authentication) : Controller
 {
     [HttpGet]
     [AllowAnonymous]
-    [Route("Queue/Public")]
+    [Route("~/Api/ShikiDashboard/Queue/Public")]
     public async Task<ActionResult<IList<PublicTorrentQueueItemDto>>> GetPublicQueue()
     {
+        if (!await IsShikiDashboardAuthorized())
+        {
+            AddShikiDashboardAuthChallenge();
+            return Unauthorized();
+        }
+
         var results = await torrents.Get();
 
         var queue = results.Where(IsPublicQueueCandidate)
@@ -29,6 +37,58 @@ public class TorrentsController(ILogger<TorrentsController> logger, Torrents tor
                            .ToList();
 
         return Ok(queue);
+    }
+
+    [HttpPost]
+    [AllowAnonymous]
+    [Route("~/Api/ShikiDashboard/IngestMagnetLink")]
+    public async Task<ActionResult<Boolean>> AddMagnetFromShikiDashboard([FromBody] ShikiDashboardIngestRequest? request)
+    {
+        if (!await IsShikiDashboardAuthorized())
+        {
+            AddShikiDashboardAuthChallenge();
+            return Unauthorized();
+        }
+
+        if (request == null || String.IsNullOrWhiteSpace(request.MagnetLink))
+        {
+            return Ok(false);
+        }
+
+        var defaults = Settings.Get.Gui.Default;
+
+        var torrent = new Torrent
+        {
+            DownloadClient = Settings.Get.DownloadClient.Client,
+            Category = defaults.Category,
+            HostDownloadAction = defaults.HostDownloadAction,
+            FinishedActionDelay = defaults.FinishedActionDelay,
+            DownloadAction = defaults.OnlyDownloadAvailableFiles
+                ? TorrentDownloadAction.DownloadAvailableFiles
+                : TorrentDownloadAction.DownloadAll,
+            FinishedAction = defaults.FinishedAction,
+            DownloadMinSize = defaults.MinFileSize,
+            IncludeRegex = defaults.IncludeRegex,
+            ExcludeRegex = defaults.ExcludeRegex,
+            TorrentRetryAttempts = defaults.TorrentRetryAttempts,
+            DownloadRetryAttempts = defaults.DownloadRetryAttempts,
+            DeleteOnError = defaults.DeleteOnError,
+            Lifetime = defaults.TorrentLifetime,
+            Priority = defaults.Priority > 0 ? defaults.Priority : null
+        };
+
+        logger.LogDebug("Ingesting magnet from Shiki Dashboard");
+
+        try
+        {
+            await torrents.AddMagnetToDebridQueue(request.MagnetLink.Trim(), torrent);
+            return Ok(true);
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, "Failed to ingest magnet from Shiki Dashboard");
+            return Ok(false);
+        }
     }
 
     [HttpGet]
@@ -583,28 +643,102 @@ public class TorrentsController(ILogger<TorrentsController> logger, Torrents tor
         var allBytesTotal = downloadStats.Sum(download => download.BytesTotal);
         var allBytesDone = downloadStats.Sum(download => download.BytesDone);
         var hasLocalDownloadPhase = activeLocalDownloads.Any(download => download.DownloadQueued != null || download.DownloadStarted != null);
+        var waitingForHostDownload = torrent.RdStatus == TorrentStatus.Finished && torrent.Downloads.Count == 0;
+        var hostDownloadsActive = downloadStats.Any(download => download.DownloadStarted != null && download.DownloadFinished == null && download.Error == null);
+        var queuedForHostDownload = !hostDownloadsActive && downloadStats.Any(download => download.DownloadQueued != null && download.DownloadStarted == null && download.Error == null);
+        var providerDownloading = torrent.RdStatus == TorrentStatus.Downloading;
 
-        var status = hasLocalDownloadPhase || torrent.RdStatus == TorrentStatus.Finished
-            ? "Being downloaded from RealDebrid"
-            : torrent.RdStatus switch
-            {
-                TorrentStatus.Queued => "Not yet added to provider",
-                TorrentStatus.Error => $"Provider error: {torrent.RdStatusRaw ?? "Unknown"}",
-                _ => "Being downloaded by RealDebrid"
-            };
+        var rawStatus = waitingForHostDownload
+            ? "WaitingForHostDownload"
+            : queuedForHostDownload
+                ? "QueuedForHostDownload"
+                : hostDownloadsActive || hasLocalDownloadPhase || providerDownloading || torrent.RdStatus == TorrentStatus.Finished
+                    ? "Downloading"
+                    : torrent.RdStatus?.ToString() ?? "Unknown";
+
+        var status = rawStatus switch
+        {
+            "WaitingForHostDownload" => "Waiting to download",
+            "QueuedForHostDownload" => "Waiting in queue",
+            "Downloading" => "Being downloaded from RealDebrid",
+            "Queued" => "Not yet added to provider",
+            "Error" => $"Provider error: {torrent.RdStatusRaw ?? "Unknown"}",
+            _ => "Waiting for debrid"
+        };
 
         var totalSizeBytes = allBytesTotal > 0 ? allBytesTotal : torrent.RdSize ?? 0;
-        var downloadedPercent = allBytesTotal > 0
-            ? Math.Clamp(allBytesDone / (Double)allBytesTotal * 100.0, 0.0, 100.0)
-            : Math.Clamp((Double)(torrent.RdProgress ?? 0), 0.0, 100.0);
+        var downloadedPercent = waitingForHostDownload
+            ? 0.0
+            : allBytesTotal > 0
+                ? Math.Clamp(allBytesDone / (Double)allBytesTotal * 100.0, 0.0, 100.0)
+                : queuedForHostDownload
+                    ? 0.0
+                    : Math.Clamp((Double)(torrent.RdProgress ?? 0), 0.0, 100.0);
 
         return new PublicTorrentQueueItemDto
         {
             Name = torrent.RdName ?? torrent.Hash,
             TotalSizeBytes = totalSizeBytes,
             DownloadedPercent = downloadedPercent,
-            Status = status
+            Status = status,
+            RawStatus = rawStatus
         };
+    }
+
+    private async Task<Boolean> IsShikiDashboardAuthorized()
+    {
+        var header = Request.Headers["Authorization"].FirstOrDefault();
+
+        if (String.IsNullOrWhiteSpace(header))
+        {
+            return false;
+        }
+
+        const String prefix = "Basic ";
+
+        if (!header.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        var encoded = header[prefix.Length..].Trim();
+
+        Byte[] credentialBytes;
+
+        try
+        {
+            credentialBytes = Convert.FromBase64String(encoded);
+        }
+        catch
+        {
+            return false;
+        }
+
+        var credentialString = Encoding.UTF8.GetString(credentialBytes);
+        var separatorIndex = credentialString.IndexOf(':');
+
+        if (separatorIndex <= 0)
+        {
+            return false;
+        }
+
+        var userName = credentialString.Substring(0, separatorIndex);
+        var password = credentialString[(separatorIndex + 1)..];
+
+        if (String.IsNullOrWhiteSpace(userName) || String.IsNullOrWhiteSpace(password))
+        {
+            return false;
+        }
+
+        return await authentication.ValidateCredentials(userName, password);
+    }
+
+    private void AddShikiDashboardAuthChallenge()
+    {
+        if (!Response.Headers.ContainsKey("WWW-Authenticate"))
+        {
+            Response.Headers.Add("WWW-Authenticate", "Basic realm=\"ShikiDashboard\"");
+        }
     }
 }
 
@@ -641,5 +775,10 @@ public class TorrentControllerVerifyRegexRequest
 {
     public String? IncludeRegex { get; set; }
     public String? ExcludeRegex { get; set; }
+    public String? MagnetLink { get; set; }
+}
+
+public class ShikiDashboardIngestRequest
+{
     public String? MagnetLink { get; set; }
 }

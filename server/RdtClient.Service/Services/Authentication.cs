@@ -26,6 +26,25 @@ public class Authentication(SignInManager<IdentityUser> signInManager, UserManag
         return result;
     }
 
+    public async Task<Boolean> ValidateCredentials(String userName, String password)
+    {
+        if (String.IsNullOrWhiteSpace(userName) || String.IsNullOrWhiteSpace(password))
+        {
+            return false;
+        }
+
+        var user = await userManager.FindByNameAsync(userName);
+
+        if (user == null)
+        {
+            return false;
+        }
+
+        var result = await signInManager.CheckPasswordSignInAsync(user, password, false);
+
+        return result.Succeeded;
+    }
+
     public async Task<IdentityUser?> GetUser()
     {
         return await userData.GetUser();

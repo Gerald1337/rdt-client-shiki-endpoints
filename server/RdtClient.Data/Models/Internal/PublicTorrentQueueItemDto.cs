@@ -6,4 +6,5 @@ public class PublicTorrentQueueItemDto
     public Int64 TotalSizeBytes { get; set; }
     public Double DownloadedPercent { get; set; }
     public String Status { get; set; } = null!;
+    public String RawStatus { get; set; } = null!;
 }

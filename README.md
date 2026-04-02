@@ -1,11 +1,47 @@
-# To run:
-- cd client && npm install
-- (root) .localdata may need to be updated
-- cd server
-- dotnet run --project RdtClient.Web  
+## Fresh checkout quick start
+1. `cd client && npm install` (the Angular client is defined by `client/package.json`, so this restores the dependencies needed for `ng serve` or `ng build`).
+2. Confirm or customize `.localdata` in the repo root before running the server: it already places logs at `.localdata/rdtclient.log`, stores the SQLite file at `.localdata/rdtclient.db`, and listens on port 6500, but you can update the `Logging.File.Path` and `Database.Path` entries to host paths that exist on your machine.
+3. `cd server` so that `dotnet` can resolve the solution and the `server/RdtClient.Web/RdtClient.Web.csproj` project file.
+4. `dotnet run --project RdtClient.Web` to start the backend API on the configured port (6500 by default), which is what the Angular client expects.
+
+## ShikiDashboard API
+
+The backend exposes two authenticated endpoints under `/Api/ShikiDashboard` so that external dashboards or automation tools can watch the active queue and submit magnets. Both endpoints use Basic authentication (the same username/password pair you set inside the main UI). The server will issue a `WWW-Authenticate: Basic realm="ShikiDashboard"` challenge if no credentials arrive. Include a header such as `Authorization: Basic <base64(username:password)>`.
+
+### GET `/Api/ShikiDashboard/Queue/Public`
+
+- **Purpose:** Returns the current queue of torrents that are not yet completed and have no errors. Internally the controller limits the list to entries where `Completed == null` and `Error` is empty, then orders them alphabetically by name.
+- **Success response:** `200 OK` with a JSON array of `PublicTorrentQueueItemDto`. Example:
+  ```json
+  [
+    {
+      "name": "Example.Torrent.S01E01",
+      "totalSizeBytes": 2147483648,
+      "downloadedPercent": 42.5,
+      "status": "Being downloaded from RealDebrid",
+      "rawStatus": "Downloading"
+    }
+  ]
+  ```
+- **Field meanings:**
+  - `name`: Display name (`RdName` or fallback to hash).
+  - `totalSizeBytes`: Sum of all tracked downloads in bytes (falls back to the provider size when no downloads exist).
+  - `downloadedPercent`: Progress between 0 and 100. When the torrent is queued for host download or waiting for files, the percent may remain `0`.
+  - `status`: Friendly text derived from queue state (e.g., “Waiting to download”, “Waiting in queue”, “Being downloaded from RealDebrid”, provider errors, or a default “Waiting for debrid” when nothing is active).
+  - `rawStatus`: Low-level state name such as `WaitingForHostDownload`, `QueuedForHostDownload`, `Downloading`, or `Unknown`.
+- **Errors:** `401 Unauthorized` when credentials are missing/bad.
+
+### POST `/Api/ShikiDashboard/IngestMagnetLink`
+
+- **Purpose:** Adds a magnet link to the queue using the default torrent settings configured in the GUI.
+- **Request body:** JSON object with a `MagnetLink` string, e.g. `{"magnetLink": "magnet:?xt=urn:btih:..."}`. The controller trims whitespace before submission.
+- **Success response:** `200 OK` with a boolean body:
+  - `true` when the magnet was successfully inserted into the queue.
+  - `false` when ingestion failed (invalid payload, torrent add error, etc.). The server also logs a warning on failure, but still replies with `false`.
+- **Errors:** `401 Unauthorized` when authentication fails; the endpoint will add the Basic challenge header before returning `401`.
+- **Notes:** Existing default GUI settings (category, download client, retry counts, regex filters, etc.) are applied automatically so that the new torrent behaves exactly like a manual upload.
 
 # Real-Debrid Torrent & Usenet Client
-
 This is a web interface to manage your torrents on Real-Debrid, AllDebrid, Premiumize TorBox or DebridLink. It supports the following features:
 
 - Add new torrents through magnets or files
@@ -19,15 +55,6 @@ This is a web interface to manage your torrents on Real-Debrid, AllDebrid, Premi
 
 [Click here to sign up for Real-Debrid.](https://real-debrid.com/?id=1348683)
 
-[Click here to sign up for AllDebrid.](https://alldebrid.com/?uid=2v91l)
-
-[Click here to sign up for Premiumize.](https://www.premiumize.me/)
-
-[Click here to sign up for TorBox.](https://torbox.app/subscription?referral=3d25018e-f30d-4c4b-a714-48c04bc76765)
-
-[Click here to sign up for DebridLink.](https://debrid-link.fr/id/6duif)
-
-<sub>(referal links so I can get a few free premium days)</sub>
 
 ## Docker Setup
 
