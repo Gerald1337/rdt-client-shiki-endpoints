@@ -4,6 +4,15 @@
 3. `cd server` so that `dotnet` can resolve the solution and the `server/RdtClient.Web/RdtClient.Web.csproj` project file.
 4. `dotnet run --project RdtClient.Web` to start the backend API on the configured port (6500 by default), which is what the Angular client expects.
 
+## Build release ZIP (Windows)
+
+Run this from the repo root after your dependencies are restored; it publishes `RdtClient.Web` for Windows x64 and then zips the `Publish` folder just like the release archives do:
+
+```
+dotnet publish server/RdtClient.Web/RdtClient.Web.csproj -c Release -r win-x64 --self-contained true -o Publish && (cd Publish && zip -r ../RdtClient.Web.zip .)
+```
+
+`RdtClient.Web.zip` lands in the repo root and contains `RdtClient.Web.exe` plus all supporting files from the publish output.
 ## ShikiDashboard API
 
 The backend exposes two authenticated endpoints under `/Api/ShikiDashboard` so that external dashboards or automation tools can watch the active queue and submit magnets. Both endpoints use Basic authentication (the same username/password pair you set inside the main UI). The server will issue a `WWW-Authenticate: Basic realm="ShikiDashboard"` challenge if no credentials arrive. Include a header such as `Authorization: Basic <base64(username:password)>`.

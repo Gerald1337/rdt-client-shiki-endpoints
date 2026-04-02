@@ -9,3 +9,5 @@ data
 Dockerfile.dev
 test.bat
 .localdata
+RdtClient.Web.zip
+RdtClient.Web/*
