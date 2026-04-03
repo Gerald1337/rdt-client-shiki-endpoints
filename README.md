@@ -1,18 +1,19 @@
+## Build release ZIP (Windows)
+
+Run this from the repo root after your dependencies are restored; it rebuilds the Angular client, publishes `RdtClient.Web` for Windows x64, and zips the `Publish` folder just like the release archives do:
+
+```
+(cd client && npm install && npm run build) && dotnet publish server/RdtClient.Web/RdtClient.Web.csproj -c Release -r win-x64 --self-contained true -o Publish && (cd Publish && zip -r ../RdtClient.Web.zip .)
+```
+
+`RdtClient.Web.zip` lands in the repo root and contains `RdtClient.Web.exe` plus all supporting files from the publish output.
+
 ## Fresh checkout quick start
 1. `cd client && npm install` (the Angular client is defined by `client/package.json`, so this restores the dependencies needed for `ng serve` or `ng build`).
 2. Confirm or customize `.localdata` in the repo root before running the server: it already places logs at `.localdata/rdtclient.log`, stores the SQLite file at `.localdata/rdtclient.db`, and listens on port 6500, but you can update the `Logging.File.Path` and `Database.Path` entries to host paths that exist on your machine.
 3. `cd server` so that `dotnet` can resolve the solution and the `server/RdtClient.Web/RdtClient.Web.csproj` project file.
 4. `dotnet run --project RdtClient.Web` to start the backend API on the configured port (6500 by default), which is what the Angular client expects.
 
-## Build release ZIP (Windows)
-
-Run this from the repo root after your dependencies are restored; it publishes `RdtClient.Web` for Windows x64 and then zips the `Publish` folder just like the release archives do:
-
-```
-dotnet publish server/RdtClient.Web/RdtClient.Web.csproj -c Release -r win-x64 --self-contained true -o Publish && (cd Publish && zip -r ../RdtClient.Web.zip .)
-```
-
-`RdtClient.Web.zip` lands in the repo root and contains `RdtClient.Web.exe` plus all supporting files from the publish output.
 ## ShikiDashboard API
 
 The backend exposes two authenticated endpoints under `/Api/ShikiDashboard` so that external dashboards or automation tools can watch the active queue and submit magnets. Both endpoints use Basic authentication (the same username/password pair you set inside the main UI). The server will issue a `WWW-Authenticate: Basic realm="ShikiDashboard"` challenge if no credentials arrive. Include a header such as `Authorization: Basic <base64(username:password)>`.
