@@ -91,7 +91,8 @@ public class TorrentsControllerPublicQueueTest
         Assert.Equal(1000, item.TotalSizeBytes);
         Assert.Equal(35, item.DownloadedPercent);
         Assert.Equal(630000, item.CurrentDownloadSpeedBytesPerSecond);
-        Assert.Equal("Downloading Torrent", item.Status);
+        Assert.Equal("Queued for downloading", item.RawStatus);
+        Assert.False(item.TorrentIsCached);
     }
 
     [Fact]
@@ -137,8 +138,8 @@ public class TorrentsControllerPublicQueueTest
         Assert.Equal(2000, item.TotalSizeBytes);
         Assert.Equal(25, item.DownloadedPercent);
         Assert.Equal(500, item.CurrentDownloadSpeedBytesPerSecond);
-        Assert.Equal("Downloading", item.Status);
-        Assert.Equal("Downloading", item.RawStatus);
+        Assert.Equal("Downloading file 1/1 (25.00% - 500 B/s)", item.RawStatus);
+        Assert.True(item.TorrentIsCached);
     }
 
     [Fact]
@@ -169,8 +170,8 @@ public class TorrentsControllerPublicQueueTest
         Assert.Equal(3000, item.TotalSizeBytes);
         Assert.Equal(0, item.DownloadedPercent);
         Assert.Equal(0, item.CurrentDownloadSpeedBytesPerSecond);
-        Assert.Equal("Waiting to download", item.Status);
-        Assert.Equal("WaitingForHostDownload", item.RawStatus);
+        Assert.Equal("Torrent finished, waiting for download links", item.RawStatus);
+        Assert.True(item.TorrentIsCached);
     }
 
     [Fact]
@@ -198,10 +199,10 @@ public class TorrentsControllerPublicQueueTest
         var item = Assert.Single(queue);
 
         Assert.Equal("Stalled Torrent", item.Name);
-        Assert.Equal("Waiting for debrid", item.Status);
         Assert.Equal(42, item.DownloadedPercent);
         Assert.Equal(0, item.CurrentDownloadSpeedBytesPerSecond);
-        Assert.Equal("Processing", item.RawStatus);
+        Assert.Equal("Torrent processing", item.RawStatus);
+        Assert.False(item.TorrentIsCached);
     }
 
     [Fact]
@@ -243,10 +244,10 @@ public class TorrentsControllerPublicQueueTest
         var item = Assert.Single(queue);
 
         Assert.Equal("Queued Torrent", item.Name);
-        Assert.Equal("Waiting in queue", item.Status);
         Assert.Equal(0, item.DownloadedPercent);
         Assert.Equal(0, item.CurrentDownloadSpeedBytesPerSecond);
-        Assert.Equal("QueuedForHostDownload", item.RawStatus);
+        Assert.Equal("Queued for downloading", item.RawStatus);
+        Assert.True(item.TorrentIsCached);
     }
 
     [Fact]
@@ -299,10 +300,10 @@ public class TorrentsControllerPublicQueueTest
         var item = Assert.Single(queue);
 
         Assert.Equal("Mixed Torrent", item.Name);
-        Assert.Equal("Downloading", item.Status);
-        Assert.Equal(50, item.DownloadedPercent);
+        Assert.Equal(25, item.DownloadedPercent);
         Assert.Equal(1000, item.CurrentDownloadSpeedBytesPerSecond);
-        Assert.Equal("Downloading", item.RawStatus);
+        Assert.Equal("Downloading file 1/2 (50.00% - 1000 B/s)", item.RawStatus);
+        Assert.True(item.TorrentIsCached);
     }
 
     [Fact]
@@ -344,6 +345,6 @@ public class TorrentsControllerPublicQueueTest
 
         Assert.Equal("Active Torrent", item.Name);
         Assert.Equal(0, item.CurrentDownloadSpeedBytesPerSecond);
-        Assert.Equal("Not yet added to provider", item.Status);
+        Assert.False(item.TorrentIsCached);
     }
 }

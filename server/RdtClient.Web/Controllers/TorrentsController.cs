@@ -1,5 +1,7 @@
 ﻿using System.Text;
 using System.Text.RegularExpressions;
+using System.Linq;
+using System.Collections.Generic;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using MonoTorrent;
@@ -651,34 +653,11 @@ public class TorrentsController(ILogger<TorrentsController> logger, Torrents tor
             ? torrent.RdSpeed ?? 0
             : activeLocalDownloads.Sum(download => download.Speed);
 
-        var rawStatus = waitingForHostDownload
-            ? "WaitingForHostDownload"
-            : queuedForHostDownload
-                ? "QueuedForHostDownload"
-                : hostDownloadsActive || hasLocalDownloadPhase || providerDownloading || torrent.RdStatus == TorrentStatus.Finished
-                    ? "Downloading"
-                    : torrent.RdStatus?.ToString() ?? "Unknown";
-
-        var status = rawStatus switch
-        {
-            "WaitingForHostDownload" => "Waiting to download",
-            "QueuedForHostDownload" => "Waiting in queue",
-            "Downloading" => providerDownloading && !hasLocalDownloadPhase
-                ? "Downloading Torrent"
-                : "Downloading",
-            "Queued" => "Not yet added to provider",
-            "Error" => $"Provider error: {torrent.RdStatusRaw ?? "Unknown"}",
-            _ => "Waiting for debrid"
-        };
+        var formattedStatus = GetTorrentStatusText(torrent, downloadStats);
 
         var totalSizeBytes = allBytesTotal > 0 ? allBytesTotal : torrent.RdSize ?? 0;
-        var downloadedPercent = waitingForHostDownload
-            ? 0.0
-            : allBytesTotal > 0
-                ? Math.Clamp(allBytesDone / (Double)allBytesTotal * 100.0, 0.0, 100.0)
-                : queuedForHostDownload
-                    ? 0.0
-                    : Math.Clamp((Double)(torrent.RdProgress ?? 0), 0.0, 100.0);
+        var downloadedPercent = CalculateDownloadedPercent(torrent, downloadStats, waitingForHostDownload, queuedForHostDownload);
+        var torrentIsCached = IsTorrentCached(torrent, formattedStatus, downloadStats);
 
         return new PublicTorrentQueueItemDto
         {
@@ -686,9 +665,187 @@ public class TorrentsController(ILogger<TorrentsController> logger, Torrents tor
             TotalSizeBytes = totalSizeBytes,
             DownloadedPercent = downloadedPercent,
             CurrentDownloadSpeedBytesPerSecond = currentDownloadSpeedBytesPerSecond,
-            Status = status,
-            RawStatus = rawStatus
+            RawStatus = formattedStatus,
+            TorrentIsCached = torrentIsCached
         };
+    }
+
+    private static Double CalculateDownloadedPercent(
+        Torrent torrent,
+        IReadOnlyList<DownloadDto> downloadStats,
+        Boolean waitingForHostDownload,
+        Boolean queuedForHostDownload)
+    {
+        var downloading = downloadStats.Where(download => download.DownloadStarted != null && download.DownloadFinished == null && download.BytesDone > 0).ToList();
+
+        if (downloadStats.Count > 0 && downloading.Count > 0)
+        {
+            var downloaded = downloadStats.Count(download => download.DownloadFinished != null);
+            var bytesDone = downloading.Sum(download => download.BytesDone);
+            var bytesTotal = downloading.Sum(download => download.BytesTotal);
+            var activeProgress = bytesTotal > 0 ? bytesDone / (Double)bytesTotal : 0.0;
+            var totalProgress = (downloaded + (activeProgress * downloading.Count)) / downloadStats.Count * 100.0;
+
+            return Math.Clamp(totalProgress, 0.0, 100.0);
+        }
+
+        var allBytesTotal = downloadStats.Sum(download => download.BytesTotal);
+        var allBytesDone = downloadStats.Sum(download => download.BytesDone);
+
+        return waitingForHostDownload
+            ? 0.0
+            : allBytesTotal > 0
+                ? Math.Clamp(allBytesDone / (Double)allBytesTotal * 100.0, 0.0, 100.0)
+                : queuedForHostDownload
+                    ? 0.0
+                    : Math.Clamp((Double)(torrent.RdProgress ?? 0), 0.0, 100.0);
+    }
+
+    private static Boolean IsTorrentCached(Torrent torrent, String rawStatus, IReadOnlyList<DownloadDto> downloadStats)
+    {
+        if (rawStatus.StartsWith("Downloading file", StringComparison.OrdinalIgnoreCase) ||
+            rawStatus.Equals("Finished", StringComparison.OrdinalIgnoreCase))
+        {
+            return true;
+        }
+
+        if (torrent.Completed != null || torrent.RdStatus == TorrentStatus.Finished)
+        {
+            return true;
+        }
+
+        return downloadStats.Any(download =>
+            download.DownloadQueued != null ||
+            download.DownloadStarted != null ||
+            download.DownloadFinished != null ||
+            download.UnpackingQueued != null ||
+            download.UnpackingStarted != null ||
+            download.UnpackingFinished != null ||
+            download.Completed != null);
+    }
+
+    private static String GetTorrentStatusText(Torrent torrent, IReadOnlyList<DownloadDto> downloadStats)
+    {
+        if (!String.IsNullOrWhiteSpace(torrent.Error))
+        {
+            return torrent.Error;
+        }
+
+        if (downloadStats.Count > 0)
+        {
+            var allFinished = downloadStats.All(download => download.Completed != null);
+
+            if (allFinished)
+            {
+                return "Finished";
+            }
+
+            var downloading = downloadStats.Where(download => download.DownloadStarted != null && download.DownloadFinished == null && download.BytesDone > 0).ToList();
+            var downloaded = downloadStats.Where(download => download.DownloadFinished != null).ToList();
+
+            if (downloading.Count > 0)
+            {
+                var bytesDone = downloading.Sum(download => download.BytesDone);
+                var bytesTotal = downloading.Sum(download => download.BytesTotal);
+                var progress = bytesTotal > 0 ? (bytesDone / (Double)bytesTotal) * 100.0 : 0.0;
+                var speed = downloading.Sum(download => download.Speed);
+                var speedText = FormatBytes(speed);
+
+                return $"Downloading file {downloading.Count + downloaded.Count}/{downloadStats.Count} ({progress:F2}% - {speedText}/s)";
+            }
+
+            var unpacking = downloadStats.Where(download => download.UnpackingStarted != null && download.UnpackingFinished == null && download.BytesDone > 0).ToList();
+            var unpacked = downloadStats.Where(download => download.UnpackingFinished != null).ToList();
+
+            if (unpacking.Count > 0)
+            {
+                var bytesDone = unpacking.Sum(download => download.BytesDone);
+                var bytesTotal = unpacking.Sum(download => download.BytesTotal);
+                var progress = bytesTotal > 0 ? (bytesDone / (Double)bytesTotal) * 100.0 : 0.0;
+
+                return $"Extracting file {unpacking.Count + unpacked.Count}/{downloadStats.Count} ({progress:F2}%)";
+            }
+
+            var queuedForUnpacking = downloadStats.Where(download => download.UnpackingQueued != null && download.UnpackingStarted == null).ToList();
+
+            if (queuedForUnpacking.Count > 0)
+            {
+                return "Queued for unpacking";
+            }
+
+            var queuedForDownload = downloadStats.Where(download => download.DownloadStarted == null && download.DownloadFinished == null).ToList();
+
+            if (queuedForDownload.Count > 0)
+            {
+                return "Queued for downloading";
+            }
+
+            if (unpacked.Count > 0)
+            {
+                return "Files unpacked";
+            }
+
+            if (downloaded.Count > 0)
+            {
+                return "Files downloaded to host";
+            }
+        }
+
+        if (torrent.Completed != null)
+        {
+            return "Finished";
+        }
+
+        return FormatProviderStatus(torrent);
+    }
+
+    private static String FormatProviderStatus(Torrent torrent)
+    {
+        switch (torrent.RdStatus)
+        {
+            case TorrentStatus.Queued:
+                return "Not Yet Added to Provider";
+            case TorrentStatus.Downloading:
+            {
+                if ((torrent.RdSeeders ?? 0) < 1 && torrent.Type != DownloadType.Nzb)
+                {
+                    return "Torrent stalled";
+                }
+
+                var speedText = FormatBytes(torrent.RdSpeed ?? 0);
+                var progress = torrent.RdProgress ?? 0;
+
+                return $"Torrent downloading ({progress}% - {speedText}/s)";
+            }
+            case TorrentStatus.Processing:
+                return "Torrent processing";
+            case TorrentStatus.WaitingForFileSelection:
+                return "Torrent waiting for file selection";
+            case TorrentStatus.Error:
+                return $"Torrent error: {torrent.RdStatusRaw ?? "Unknown"}";
+            case TorrentStatus.Finished:
+                return "Torrent finished, waiting for download links";
+            case TorrentStatus.Uploading:
+                return "Torrent uploading";
+            default:
+                return "Unknown status";
+        }
+    }
+
+    private static String FormatBytes(Double bytes)
+    {
+        if (Double.IsNaN(bytes) || bytes <= 0)
+        {
+            return "0 B";
+        }
+
+        var units = new[] { "B", "KB", "MB", "GB", "TB", "PB", "EB", "ZB", "YB" };
+        var exponent = (Int32)Math.Min(units.Length - 1, Math.Floor(Math.Log(bytes, 1024)));
+        exponent = Math.Max(exponent, 0);
+        var value = bytes / Math.Pow(1024, exponent);
+        var formatted = value >= 100 ? value.ToString("0") : value >= 10 ? value.ToString("0.0") : value.ToString("0.##");
+
+        return $"{formatted} {units[exponent]}";
     }
 
     private async Task<Boolean> IsShikiDashboardAuthorized()
