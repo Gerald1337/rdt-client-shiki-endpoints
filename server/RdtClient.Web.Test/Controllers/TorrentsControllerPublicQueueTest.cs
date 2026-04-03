@@ -87,6 +87,7 @@ public class TorrentsControllerPublicQueueTest
         var queue = Assert.IsType<List<PublicTorrentQueueItemDto>>(okResult.Value);
         var item = Assert.Single(queue);
 
+        Assert.Equal(torrentId, item.TorrentId);
         Assert.Equal("Ubuntu ISO", item.Name);
         Assert.Equal(1000, item.TotalSizeBytes);
         Assert.Equal(35, item.DownloadedPercent);
@@ -468,5 +469,66 @@ public class TorrentsControllerPublicQueueTest
         Assert.Equal("Active Torrent", item.Name);
         Assert.Equal(0, item.CurrentDownloadSpeedBytesPerSecond);
         Assert.False(item.TorrentIsCached);
+    }
+
+    [Fact]
+    public void RemoveFromShikiDashboardQueue_HasAllowAnonymousAttribute()
+    {
+        var type = typeof(TorrentsController);
+        var method = type.GetMethod(nameof(TorrentsController.RemoveFromShikiDashboardQueue));
+
+        var attribute = method?.GetCustomAttributes(typeof(AllowAnonymousAttribute), true).FirstOrDefault();
+
+        Assert.NotNull(attribute);
+    }
+
+    [Fact]
+    public async Task RemoveFromShikiDashboardQueue_DeletesTorrentWithSelectAllBehavior()
+    {
+        var torrentId = Guid.NewGuid();
+
+        _torrentsMock.Setup(t => t.Delete(torrentId, true, true, true))
+                     .Returns(Task.CompletedTask);
+
+        var result = await _controller.RemoveFromShikiDashboardQueue(new ShikiDashboardEditQueueRequest
+        {
+            TorrentId = torrentId
+        });
+
+        var okResult = Assert.IsType<OkObjectResult>(result.Result);
+        Assert.True(Assert.IsType<Boolean>(okResult.Value));
+        _torrentsMock.Verify(t => t.Delete(torrentId, true, true, true), Times.Once);
+    }
+
+    [Fact]
+    public void RetryFromShikiDashboardQueue_HasAllowAnonymousAttribute()
+    {
+        var type = typeof(TorrentsController);
+        var method = type.GetMethod(nameof(TorrentsController.RetryFromShikiDashboardQueue));
+
+        var attribute = method?.GetCustomAttributes(typeof(AllowAnonymousAttribute), true).FirstOrDefault();
+
+        Assert.NotNull(attribute);
+    }
+
+    [Fact]
+    public async Task RetryFromShikiDashboardQueue_RetriesTorrentWithSameBehaviorAsUi()
+    {
+        var torrentId = Guid.NewGuid();
+
+        _torrentsMock.Setup(t => t.UpdateRetry(torrentId, It.IsAny<DateTimeOffset?>(), 0))
+                     .Returns(Task.CompletedTask);
+        _torrentsMock.Setup(t => t.RetryTorrent(torrentId, 0))
+                     .Returns(Task.CompletedTask);
+
+        var result = await _controller.RetryFromShikiDashboardQueue(new ShikiDashboardEditQueueRequest
+        {
+            TorrentId = torrentId
+        });
+
+        var okResult = Assert.IsType<OkObjectResult>(result.Result);
+        Assert.True(Assert.IsType<Boolean>(okResult.Value));
+        _torrentsMock.Verify(t => t.UpdateRetry(torrentId, It.IsAny<DateTimeOffset?>(), 0), Times.Once);
+        _torrentsMock.Verify(t => t.RetryTorrent(torrentId, 0), Times.Once);
     }
 }

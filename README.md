@@ -16,7 +16,7 @@ Run this from the repo root after your dependencies are restored; it rebuilds th
 
 ## ShikiDashboard API
 
-The backend exposes two authenticated endpoints under `/Api/ShikiDashboard` so that external dashboards or automation tools can watch the active queue and submit magnets. Both endpoints use Basic authentication (the same username/password pair you set inside the main UI). The server will issue a `WWW-Authenticate: Basic realm="ShikiDashboard"` challenge if no credentials arrive. Include a header such as `Authorization: Basic <base64(username:password)>`.
+The backend exposes authenticated endpoints under `/Api/ShikiDashboard` so that external dashboards or automation tools can watch the active queue, edit queued torrents, and submit magnets. Both endpoints use Basic authentication (the same username/password pair you set inside the main UI). The server will issue a `WWW-Authenticate: Basic realm="ShikiDashboard"` challenge if no credentials arrive. Include a header such as `Authorization: Basic <base64(username:password)>`.
 
 ### GET `/Api/ShikiDashboard/Queue/Public`
 
@@ -25,6 +25,7 @@ The backend exposes two authenticated endpoints under `/Api/ShikiDashboard` so t
   ```json
   [
     {
+      "torrentId": "8d8ebf58-6d40-4d8f-9d4b-0ff6a54f4b5d",
       "name": "Example.Torrent.S01E01",
       "totalSizeBytes": 2147483648,
       "downloadedPercent": 42.5,
@@ -42,6 +43,7 @@ The backend exposes two authenticated endpoints under `/Api/ShikiDashboard` so t
 - **Example curl:**  
   `curl -u USERNAME:PASSWORD -X GET http://HOSTNAME/Api/ShikiDashboard/Queue/Public`
 - **Field meanings:**
+  - `torrentId`: Stable internal GUID for the torrent. Use this value when calling `/Api/ShikiDashboard/EditQueue/Remove` or `/Api/ShikiDashboard/EditQueue/Retry`.
   - `name`: Display name (`RdName` or fallback to hash).
   - `totalSizeBytes`: Sum of all tracked downloads in bytes (falls back to the provider size when no downloads exist).
   - `downloadedPercent`: Progress between `0` and `100`. During local file downloads, this is calculated across the full file set, so `Downloading 1/2 files (50.00% - ...)` yields `25` instead of `50`.
@@ -55,6 +57,28 @@ The backend exposes two authenticated endpoints under `/Api/ShikiDashboard` so t
   - `queuedFilesCount`: Number of files queued for host download but not started yet. Otherwise `null`.
   - `torrentIsCached`: `true` once the torrent has finished on the provider and is cached locally on the debrid side, including host-download phases like `Downloading ... files`; otherwise `false`.
 - **Errors:** `401 Unauthorized` when credentials are missing/bad.
+
+### POST `/Api/ShikiDashboard/EditQueue/Remove`
+
+- **Purpose:** Removes a torrent using the exact same backend behavior as opening the torrent in the UI, clicking `Delete selected`, enabling every checkbox in the confirmation dialog, and confirming deletion.
+- **Request body:** JSON object with the `torrentId` returned by `/Api/ShikiDashboard/Queue/Public`, e.g. `{"torrentId":"8d8ebf58-6d40-4d8f-9d4b-0ff6a54f4b5d"}`.
+- **Success response:** `200 OK` with:
+  - `true` when the delete request was accepted.
+  - `false` when the payload was invalid or the delete operation failed.
+- **Example curl:**  
+  `curl -u USERNAME:PASSWORD -H "Content-Type: application/json" -d '{"torrentId":"8d8ebf58-6d40-4d8f-9d4b-0ff6a54f4b5d"}' http://HOSTNAME/Api/ShikiDashboard/EditQueue/Remove`
+- **Notes:** This maps to `Delete(torrentId, true, true, true)`, so it removes the torrent from rdt-client, removes it from the provider, and deletes local files.
+
+### POST `/Api/ShikiDashboard/EditQueue/Retry`
+
+- **Purpose:** Retries a torrent using the exact same backend behavior as opening the torrent in the UI, clicking `Retry selected`, and confirming the retry dialog.
+- **Request body:** JSON object with the `torrentId` returned by `/Api/ShikiDashboard/Queue/Public`, e.g. `{"torrentId":"8d8ebf58-6d40-4d8f-9d4b-0ff6a54f4b5d"}`.
+- **Success response:** `200 OK` with:
+  - `true` when the retry request was accepted.
+  - `false` when the payload was invalid or the retry operation failed.
+- **Example curl:**  
+  `curl -u USERNAME:PASSWORD -H "Content-Type: application/json" -d '{"torrentId":"8d8ebf58-6d40-4d8f-9d4b-0ff6a54f4b5d"}' http://HOSTNAME/Api/ShikiDashboard/EditQueue/Retry`
+- **Notes:** This follows the same sequence as the UI: it sets retry metadata, deletes torrent data plus local/provider state through the retry flow, then re-adds the original magnet or torrent file.
 
 ### POST `/Api/ShikiDashboard/IngestMagnetLink`
 

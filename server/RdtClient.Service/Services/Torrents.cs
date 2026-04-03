@@ -705,7 +705,7 @@ public class Torrents(
         }
     }
 
-    public async Task RetryTorrent(Guid torrentId, Int32 retryCount)
+    public virtual async Task RetryTorrent(Guid torrentId, Int32 retryCount)
     {
         await TorrentResetLock.WaitAsync();
 
@@ -855,7 +855,7 @@ public class Torrents(
         await torrentData.UpdatePriority(torrent.TorrentId, priority);
     }
 
-    public async Task UpdateRetry(Guid torrentId, DateTimeOffset? datetime, Int32 retry)
+    public virtual async Task UpdateRetry(Guid torrentId, DateTimeOffset? datetime, Int32 retry)
     {
         await torrentData.UpdateRetry(torrentId, datetime, retry);
     }

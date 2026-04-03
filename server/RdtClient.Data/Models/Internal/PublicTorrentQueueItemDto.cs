@@ -2,6 +2,7 @@ namespace RdtClient.Data.Models.Internal;
 
 public class PublicTorrentQueueItemDto
 {
+    public Guid TorrentId { get; set; }
     public String Name { get; set; } = null!;
     public Int64 TotalSizeBytes { get; set; }
     public Double DownloadedPercent { get; set; }

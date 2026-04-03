@@ -48,6 +48,67 @@ public class TorrentsController(ILogger<TorrentsController> logger, Torrents tor
 
     [HttpPost]
     [AllowAnonymous]
+    [Route("~/Api/ShikiDashboard/EditQueue/Remove")]
+    public async Task<ActionResult<Boolean>> RemoveFromShikiDashboardQueue([FromBody] ShikiDashboardEditQueueRequest? request)
+    {
+        if (!await IsShikiDashboardAuthorized())
+        {
+            AddShikiDashboardAuthChallenge();
+            return Unauthorized();
+        }
+
+        if (request == null || request.TorrentId == Guid.Empty)
+        {
+            return Ok(false);
+        }
+
+        logger.LogDebug("Removing torrent {torrentId} from Shiki Dashboard", request.TorrentId);
+
+        try
+        {
+            await torrents.Delete(request.TorrentId, true, true, true);
+            return Ok(true);
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, "Failed to remove torrent {torrentId} from Shiki Dashboard", request.TorrentId);
+            return Ok(false);
+        }
+    }
+
+    [HttpPost]
+    [AllowAnonymous]
+    [Route("~/Api/ShikiDashboard/EditQueue/Retry")]
+    public async Task<ActionResult<Boolean>> RetryFromShikiDashboardQueue([FromBody] ShikiDashboardEditQueueRequest? request)
+    {
+        if (!await IsShikiDashboardAuthorized())
+        {
+            AddShikiDashboardAuthChallenge();
+            return Unauthorized();
+        }
+
+        if (request == null || request.TorrentId == Guid.Empty)
+        {
+            return Ok(false);
+        }
+
+        logger.LogDebug("Retrying torrent {torrentId} from Shiki Dashboard", request.TorrentId);
+
+        try
+        {
+            await torrents.UpdateRetry(request.TorrentId, DateTimeOffset.UtcNow, 0);
+            await torrents.RetryTorrent(request.TorrentId, 0);
+            return Ok(true);
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, "Failed to retry torrent {torrentId} from Shiki Dashboard", request.TorrentId);
+            return Ok(false);
+        }
+    }
+
+    [HttpPost]
+    [AllowAnonymous]
     [Route("~/Api/ShikiDashboard/IngestMagnetLink")]
     public async Task<ActionResult<Boolean>> AddMagnetFromShikiDashboard([FromBody] ShikiDashboardIngestRequest? request)
     {
@@ -679,6 +740,7 @@ public class TorrentsController(ILogger<TorrentsController> logger, Torrents tor
 
         return new PublicTorrentQueueItemDto
         {
+            TorrentId = torrent.TorrentId,
             Name = torrent.RdName ?? torrent.Hash,
             TotalSizeBytes = totalSizeBytes,
             DownloadedPercent = downloadedPercent,
@@ -992,4 +1054,9 @@ public class TorrentControllerVerifyRegexRequest
 public class ShikiDashboardIngestRequest
 {
     public String? MagnetLink { get; set; }
+}
+
+public class ShikiDashboardEditQueueRequest
+{
+    public Guid TorrentId { get; set; }
 }
