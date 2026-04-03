@@ -92,6 +92,12 @@ public class TorrentsControllerPublicQueueTest
         Assert.Equal(35, item.DownloadedPercent);
         Assert.Equal(630000, item.CurrentDownloadSpeedBytesPerSecond);
         Assert.Equal("Queued for downloading", item.RawStatus);
+        Assert.Equal("Queued for downloading", item.Status);
+        Assert.Equal("Queued for downloading", item.Status);
+        Assert.Null(item.TotalFilesToDownload);
+        Assert.Null(item.CompletedFilesCount);
+        Assert.Null(item.ActiveFilesCount);
+        Assert.Null(item.QueuedFilesCount);
         Assert.False(item.TorrentIsCached);
     }
 
@@ -138,7 +144,12 @@ public class TorrentsControllerPublicQueueTest
         Assert.Equal(2000, item.TotalSizeBytes);
         Assert.Equal(25, item.DownloadedPercent);
         Assert.Equal(500, item.CurrentDownloadSpeedBytesPerSecond);
-        Assert.Equal("Downloading file 1/1 (25.00% - 500 B/s)", item.RawStatus);
+        Assert.Equal("Downloading 1/1 files (25.00% - 500 B/s)", item.RawStatus);
+        Assert.Equal("Downloading", item.Status);
+        Assert.Equal(1, item.TotalFilesToDownload);
+        Assert.Equal(0, item.CompletedFilesCount);
+        Assert.Equal(1, item.ActiveFilesCount);
+        Assert.Equal(0, item.QueuedFilesCount);
         Assert.True(item.TorrentIsCached);
     }
 
@@ -171,6 +182,7 @@ public class TorrentsControllerPublicQueueTest
         Assert.Equal(0, item.DownloadedPercent);
         Assert.Equal(0, item.CurrentDownloadSpeedBytesPerSecond);
         Assert.Equal("Torrent finished, waiting for download links", item.RawStatus);
+        Assert.Equal("Torrent finished, waiting for download links", item.Status);
         Assert.True(item.TorrentIsCached);
     }
 
@@ -202,6 +214,7 @@ public class TorrentsControllerPublicQueueTest
         Assert.Equal(42, item.DownloadedPercent);
         Assert.Equal(0, item.CurrentDownloadSpeedBytesPerSecond);
         Assert.Equal("Torrent processing", item.RawStatus);
+        Assert.Equal("Torrent processing", item.Status);
         Assert.False(item.TorrentIsCached);
     }
 
@@ -247,6 +260,10 @@ public class TorrentsControllerPublicQueueTest
         Assert.Equal(0, item.DownloadedPercent);
         Assert.Equal(0, item.CurrentDownloadSpeedBytesPerSecond);
         Assert.Equal("Queued for downloading", item.RawStatus);
+        Assert.Equal(1, item.TotalFilesToDownload);
+        Assert.Equal(0, item.CompletedFilesCount);
+        Assert.Equal(0, item.ActiveFilesCount);
+        Assert.Equal(1, item.QueuedFilesCount);
         Assert.True(item.TorrentIsCached);
     }
 
@@ -302,8 +319,113 @@ public class TorrentsControllerPublicQueueTest
         Assert.Equal("Mixed Torrent", item.Name);
         Assert.Equal(25, item.DownloadedPercent);
         Assert.Equal(1000, item.CurrentDownloadSpeedBytesPerSecond);
-        Assert.Equal("Downloading file 1/2 (50.00% - 1000 B/s)", item.RawStatus);
+        Assert.Equal("Downloading 1/2 files (50.00% - 1000 B/s)", item.RawStatus);
+        Assert.Equal("Downloading", item.Status);
+        Assert.Equal(2, item.TotalFilesToDownload);
+        Assert.Equal(0, item.CompletedFilesCount);
+        Assert.Equal(1, item.ActiveFilesCount);
+        Assert.Equal(1, item.QueuedFilesCount);
         Assert.True(item.TorrentIsCached);
+    }
+
+    [Fact]
+    public async Task GetPublicQueue_NormalizesProviderDownloadingStatus()
+    {
+        var torrentId = Guid.NewGuid();
+
+        _torrentsMock.Setup(t => t.Get())
+                     .ReturnsAsync([
+                         new Torrent
+                         {
+                             TorrentId = torrentId,
+                             Hash = "hash-7",
+                             RdName = "Provider Downloading",
+                             RdSize = 8000,
+                             RdProgress = 73,
+                             RdSpeed = 1024 * 1024,
+                             RdStatus = TorrentStatus.Downloading,
+                             RdSeeders = 5
+                         }
+                     ]);
+
+        var result = await _controller.GetPublicQueue();
+
+        var okResult = Assert.IsType<OkObjectResult>(result.Result);
+        var queue = Assert.IsType<List<PublicTorrentQueueItemDto>>(okResult.Value);
+        var item = Assert.Single(queue);
+
+        Assert.Equal("Torrent downloading (73% - 1 MB/s)", item.RawStatus);
+        Assert.Equal("Torrent Downloading", item.Status);
+    }
+
+    [Fact]
+    public async Task GetPublicQueue_NormalizesErrorStatus()
+    {
+        var torrentId = Guid.NewGuid();
+
+        _torrentsMock.Setup(t => t.Get())
+                     .ReturnsAsync([
+                         new Torrent
+                         {
+                             TorrentId = torrentId,
+                             Hash = "hash-8",
+                             RdName = "Provider Error",
+                             RdSize = 1000,
+                             RdStatus = TorrentStatus.Error,
+                             RdStatusRaw = "magnet refused"
+                         }
+                     ]);
+
+        var result = await _controller.GetPublicQueue();
+
+        var okResult = Assert.IsType<OkObjectResult>(result.Result);
+        var queue = Assert.IsType<List<PublicTorrentQueueItemDto>>(okResult.Value);
+        var item = Assert.Single(queue);
+
+        Assert.Equal("Torrent error: magnet refused", item.RawStatus);
+        Assert.Equal("Error", item.Status);
+    }
+
+    [Fact]
+    public async Task GetPublicQueue_NormalizesExtractingStatus()
+    {
+        var torrentId = Guid.NewGuid();
+        var downloadId = Guid.NewGuid();
+
+        _torrentsMock.Setup(t => t.Get())
+                     .ReturnsAsync([
+                         new Torrent
+                         {
+                             TorrentId = torrentId,
+                             Hash = "hash-9",
+                             RdName = "Unpacking Torrent",
+                             RdSize = 1200,
+                             RdStatus = TorrentStatus.Finished,
+                             Downloads =
+                             [
+                                 new Download
+                                 {
+                                     DownloadId = downloadId,
+                                     TorrentId = torrentId,
+                                     Path = "/downloads/unpack.mkv",
+                                     UnpackingQueued = DateTimeOffset.UtcNow.AddMinutes(-5),
+                                     UnpackingStarted = DateTimeOffset.UtcNow.AddMinutes(-3)
+                                 }
+                             ]
+                         }
+                     ]);
+
+        _torrentsMock.Setup(t => t.GetDownloadStats(downloadId))
+                     .Returns((0, 2000, 1000));
+
+        var result = await _controller.GetPublicQueue();
+
+        var okResult = Assert.IsType<OkObjectResult>(result.Result);
+        var queue = Assert.IsType<List<PublicTorrentQueueItemDto>>(okResult.Value);
+        var item = Assert.Single(queue);
+
+        Assert.Equal("Extracting 1/1 files (50.00%)", item.RawStatus);
+        Assert.Equal("Extracting", item.Status);
     }
 
     [Fact]

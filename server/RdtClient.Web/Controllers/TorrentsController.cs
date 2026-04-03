@@ -20,6 +20,11 @@ namespace RdtClient.Web.Controllers;
 [Route("Api/Torrents")]
 public class TorrentsController(ILogger<TorrentsController> logger, Torrents torrents, TorrentRunner torrentRunner, IRateLimitCoordinator coordinator, Authentication authentication) : Controller
 {
+    private static readonly Regex DownloadingFilesRegex = new(@"^Downloading \d+/\d+ files \(\d+(?:\.\d+)?% - .+/s\)$", RegexOptions.Compiled | RegexOptions.IgnoreCase);
+    private static readonly Regex ExtractingFilesRegex = new(@"^Extracting \d+/\d+ files \(\d+(?:\.\d+)?%\)$", RegexOptions.Compiled | RegexOptions.IgnoreCase);
+    private static readonly Regex TorrentDownloadingRegex = new(@"^Torrent downloading \(\d+(?:\.\d+)?% - .+/s\)$", RegexOptions.Compiled | RegexOptions.IgnoreCase);
+    private static readonly Regex TorrentErrorRegex = new(@"^Torrent error: .+", RegexOptions.Compiled | RegexOptions.IgnoreCase);
+
     [HttpGet]
     [AllowAnonymous]
     [Route("~/Api/ShikiDashboard/Queue/Public")]
@@ -641,10 +646,21 @@ public class TorrentsController(ILogger<TorrentsController> logger, Torrents tor
 
         var activeLocalDownloads = downloadStats.Where(download => download.Completed == null && download.DownloadFinished == null && download.Error == null)
                                                 .ToList();
+        var completedFilesCount = downloadStats.Count(download => download.DownloadFinished != null && download.Error == null);
+        var activeFilesCount = downloadStats.Count(download => download.DownloadStarted != null && download.DownloadFinished == null && download.Error == null);
+        var queuedFilesCount = downloadStats.Count(download => download.DownloadQueued != null && download.DownloadStarted == null && download.Error == null);
 
         var allBytesTotal = downloadStats.Sum(download => download.BytesTotal);
         var allBytesDone = downloadStats.Sum(download => download.BytesDone);
         var hasLocalDownloadPhase = activeLocalDownloads.Any(download => download.DownloadQueued != null || download.DownloadStarted != null);
+        var hasTrackedHostDownloadState = downloadStats.Any(download =>
+            download.DownloadQueued != null ||
+            download.DownloadStarted != null ||
+            download.DownloadFinished != null ||
+            download.UnpackingQueued != null ||
+            download.UnpackingStarted != null ||
+            download.UnpackingFinished != null ||
+            download.Completed != null);
         var waitingForHostDownload = torrent.RdStatus == TorrentStatus.Finished && torrent.Downloads.Count == 0;
         var hostDownloadsActive = downloadStats.Any(download => download.DownloadStarted != null && download.DownloadFinished == null && download.Error == null);
         var queuedForHostDownload = !hostDownloadsActive && downloadStats.Any(download => download.DownloadQueued != null && download.DownloadStarted == null && download.Error == null);
@@ -654,10 +670,12 @@ public class TorrentsController(ILogger<TorrentsController> logger, Torrents tor
             : activeLocalDownloads.Sum(download => download.Speed);
 
         var formattedStatus = GetTorrentStatusText(torrent, downloadStats);
+        var normalizedStatus = NormalizeQueueStatus(formattedStatus);
 
         var totalSizeBytes = allBytesTotal > 0 ? allBytesTotal : torrent.RdSize ?? 0;
         var downloadedPercent = CalculateDownloadedPercent(torrent, downloadStats, waitingForHostDownload, queuedForHostDownload);
         var torrentIsCached = IsTorrentCached(torrent, formattedStatus, downloadStats);
+        Int32? totalFilesToDownload = hasTrackedHostDownloadState ? downloadStats.Count : null;
 
         return new PublicTorrentQueueItemDto
         {
@@ -666,6 +684,11 @@ public class TorrentsController(ILogger<TorrentsController> logger, Torrents tor
             DownloadedPercent = downloadedPercent,
             CurrentDownloadSpeedBytesPerSecond = currentDownloadSpeedBytesPerSecond,
             RawStatus = formattedStatus,
+            Status = normalizedStatus,
+            TotalFilesToDownload = totalFilesToDownload,
+            CompletedFilesCount = totalFilesToDownload.HasValue ? completedFilesCount : null,
+            ActiveFilesCount = totalFilesToDownload.HasValue ? activeFilesCount : null,
+            QueuedFilesCount = totalFilesToDownload.HasValue ? queuedFilesCount : null,
             TorrentIsCached = torrentIsCached
         };
     }
@@ -703,7 +726,7 @@ public class TorrentsController(ILogger<TorrentsController> logger, Torrents tor
 
     private static Boolean IsTorrentCached(Torrent torrent, String rawStatus, IReadOnlyList<DownloadDto> downloadStats)
     {
-        if (rawStatus.StartsWith("Downloading file", StringComparison.OrdinalIgnoreCase) ||
+        if (rawStatus.StartsWith("Downloading ", StringComparison.OrdinalIgnoreCase) ||
             rawStatus.Equals("Finished", StringComparison.OrdinalIgnoreCase))
         {
             return true;
@@ -751,7 +774,7 @@ public class TorrentsController(ILogger<TorrentsController> logger, Torrents tor
                 var speed = downloading.Sum(download => download.Speed);
                 var speedText = FormatBytes(speed);
 
-                return $"Downloading file {downloading.Count + downloaded.Count}/{downloadStats.Count} ({progress:F2}% - {speedText}/s)";
+                return $"Downloading {downloading.Count + downloaded.Count}/{downloadStats.Count} files ({progress:F2}% - {speedText}/s)";
             }
 
             var unpacking = downloadStats.Where(download => download.UnpackingStarted != null && download.UnpackingFinished == null && download.BytesDone > 0).ToList();
@@ -763,7 +786,7 @@ public class TorrentsController(ILogger<TorrentsController> logger, Torrents tor
                 var bytesTotal = unpacking.Sum(download => download.BytesTotal);
                 var progress = bytesTotal > 0 ? (bytesDone / (Double)bytesTotal) * 100.0 : 0.0;
 
-                return $"Extracting file {unpacking.Count + unpacked.Count}/{downloadStats.Count} ({progress:F2}%)";
+                return $"Extracting {unpacking.Count + unpacked.Count}/{downloadStats.Count} files ({progress:F2}%)";
             }
 
             var queuedForUnpacking = downloadStats.Where(download => download.UnpackingQueued != null && download.UnpackingStarted == null).ToList();
@@ -830,6 +853,31 @@ public class TorrentsController(ILogger<TorrentsController> logger, Torrents tor
             default:
                 return "Unknown status";
         }
+    }
+
+    private static String NormalizeQueueStatus(String rawStatus)
+    {
+        if (DownloadingFilesRegex.IsMatch(rawStatus))
+        {
+            return "Downloading";
+        }
+
+        if (ExtractingFilesRegex.IsMatch(rawStatus))
+        {
+            return "Extracting";
+        }
+
+        if (TorrentDownloadingRegex.IsMatch(rawStatus))
+        {
+            return "Torrent Downloading";
+        }
+
+        if (TorrentErrorRegex.IsMatch(rawStatus))
+        {
+            return "Error";
+        }
+
+        return rawStatus;
     }
 
     private static String FormatBytes(Double bytes)

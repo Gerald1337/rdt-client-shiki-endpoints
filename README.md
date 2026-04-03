@@ -29,7 +29,12 @@ The backend exposes two authenticated endpoints under `/Api/ShikiDashboard` so t
       "totalSizeBytes": 2147483648,
       "downloadedPercent": 42.5,
       "currentDownloadSpeedBytesPerSecond": 1048576,
-      "rawStatus": "Downloading file 1/2 (85.00% - 1 MB/s)",
+      "rawStatus": "Downloading 1/2 files (85.00% - 1 MB/s)",
+      "status": "Downloading",
+      "totalFilesToDownload": 2,
+      "completedFilesCount": 0,
+      "activeFilesCount": 1,
+      "queuedFilesCount": 1,
       "torrentIsCached": true
     }
   ]
@@ -39,10 +44,16 @@ The backend exposes two authenticated endpoints under `/Api/ShikiDashboard` so t
 - **Field meanings:**
   - `name`: Display name (`RdName` or fallback to hash).
   - `totalSizeBytes`: Sum of all tracked downloads in bytes (falls back to the provider size when no downloads exist).
-  - `downloadedPercent`: Progress between `0` and `100`. During local file downloads, this is calculated across the full file set, so `Downloading file 1/2 (50.00% - ...)` yields `25` instead of `50`.
+  - `downloadedPercent`: Progress between `0` and `100`. During local file downloads, this is calculated across the full file set, so `Downloading 1/2 files (50.00% - ...)` yields `25` instead of `50`.
   - `currentDownloadSpeedBytesPerSecond`: Current download speed in bytes per second. During the debrid torrent phase it uses the same `rdSpeed` value shown in the main UI status text; during local host downloads it sums the active local download speeds.
-  - `rawStatus`: The literal text shown in the UI status column (it mirrors the Angular `TorrentStatusPipe`). Expect strings like `Downloading file 1/2 (25.00% - 500 B/s)`, `Torrent downloading (15% - 630 kB/s)`, `Queued for downloading`, `Queued for unpacking`, `Torrent finished, waiting for download links`, and other progress or queue messages the UI renders. The previous `status` field is gone because the DTO now exposes raw UI text plus `torrentIsCached`.
-  - `torrentIsCached`: `true` once the torrent has finished on the provider and is cached locally on the debrid side, including host-download phases like `Downloading file ...`; otherwise `false`.
+  - `rawStatus`: The literal text shown in the UI status column (it mirrors the Angular `TorrentStatusPipe`). Expect strings like `Downloading 1/2 files (25.00% - 500 B/s)`, `Torrent downloading (15% - 630 kB/s)`, `Queued for downloading`, `Queued for unpacking`, `Torrent finished, waiting for download links`, and other progress or queue messages the UI renders. During host downloads and extraction, the `X/Y` value is the count of completed plus active files out of the total, not a sequential file index.
+  - `status`: A normalized label derived from `rawStatus`. For exact literals (like `Queued for downloading` or `Torrent finished, waiting for download links`) it matches `rawStatus`, while the pattern-based strings above collapse to one of `Downloading`, `Extracting`, `Torrent Downloading`, or `Error` so downstream clients can branch on a small, consistent vocabulary.
+  - `rawStatus` values may include the exact strings listed below or the pattern-based forms shown after that. The exact strings are `Finished`, `Queued for unpacking`, `Queued for downloading`, `Files unpacked`, `Files downloaded to host`, `Not Yet Added to Provider`, `Torrent stalled`, `Torrent processing`, `Torrent waiting for file selection`, `Torrent finished, waiting for download links`, `Torrent uploading`, and `Unknown status`. The pattern-based forms are `Downloading X/Y files (P% - S/s)`, `Extracting X/Y files (P%)`, `Torrent downloading (P% - S/s)`, and `Torrent error: <rdStatusRaw or "Unknown">`.
+  - `totalFilesToDownload`: The total number of tracked files in the local host-download phase. Otherwise `null`.
+  - `completedFilesCount`: Number of files whose host download has finished. Otherwise `null`.
+  - `activeFilesCount`: Number of files currently being host-downloaded. Otherwise `null`.
+  - `queuedFilesCount`: Number of files queued for host download but not started yet. Otherwise `null`.
+  - `torrentIsCached`: `true` once the torrent has finished on the provider and is cached locally on the debrid side, including host-download phases like `Downloading ... files`; otherwise `false`.
 - **Errors:** `401 Unauthorized` when credentials are missing/bad.
 
 ### POST `/Api/ShikiDashboard/IngestMagnetLink`
