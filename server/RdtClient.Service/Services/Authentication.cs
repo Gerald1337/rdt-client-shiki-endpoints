@@ -26,7 +26,7 @@ public class Authentication(SignInManager<IdentityUser> signInManager, UserManag
         return result;
     }
 
-    public async Task<Boolean> ValidateCredentials(String userName, String password)
+    public virtual async Task<Boolean> ValidateCredentials(String userName, String password)
     {
         if (String.IsNullOrWhiteSpace(userName) || String.IsNullOrWhiteSpace(password))
         {

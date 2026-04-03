@@ -647,6 +647,9 @@ public class TorrentsController(ILogger<TorrentsController> logger, Torrents tor
         var hostDownloadsActive = downloadStats.Any(download => download.DownloadStarted != null && download.DownloadFinished == null && download.Error == null);
         var queuedForHostDownload = !hostDownloadsActive && downloadStats.Any(download => download.DownloadQueued != null && download.DownloadStarted == null && download.Error == null);
         var providerDownloading = torrent.RdStatus == TorrentStatus.Downloading;
+        var currentDownloadSpeedBytesPerSecond = providerDownloading && !hasLocalDownloadPhase
+            ? torrent.RdSpeed ?? 0
+            : activeLocalDownloads.Sum(download => download.Speed);
 
         var rawStatus = waitingForHostDownload
             ? "WaitingForHostDownload"
@@ -660,7 +663,9 @@ public class TorrentsController(ILogger<TorrentsController> logger, Torrents tor
         {
             "WaitingForHostDownload" => "Waiting to download",
             "QueuedForHostDownload" => "Waiting in queue",
-            "Downloading" => "Being downloaded from RealDebrid",
+            "Downloading" => providerDownloading && !hasLocalDownloadPhase
+                ? "Downloading Torrent"
+                : "Downloading",
             "Queued" => "Not yet added to provider",
             "Error" => $"Provider error: {torrent.RdStatusRaw ?? "Unknown"}",
             _ => "Waiting for debrid"
@@ -680,6 +685,7 @@ public class TorrentsController(ILogger<TorrentsController> logger, Torrents tor
             Name = torrent.RdName ?? torrent.Hash,
             TotalSizeBytes = totalSizeBytes,
             DownloadedPercent = downloadedPercent,
+            CurrentDownloadSpeedBytesPerSecond = currentDownloadSpeedBytesPerSecond,
             Status = status,
             RawStatus = rawStatus
         };

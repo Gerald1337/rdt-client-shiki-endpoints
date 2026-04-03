@@ -10,6 +10,7 @@ namespace RdtClient.Web.Test.Controllers;
 
 public class TorrentsControllerNzbTest
 {
+    private readonly Mock<Authentication> _authenticationMock;
     private readonly TorrentsController _controller;
     private readonly Mock<IRateLimitCoordinator> _coordinatorMock;
     private readonly Mock<ILogger<TorrentsController>> _loggerMock;
@@ -20,7 +21,8 @@ public class TorrentsControllerNzbTest
         _torrentsMock = new(null!, null!, null!, null!, null!, null!, null!, null!, null!, null!, null!);
         _loggerMock = new();
         _coordinatorMock = new();
-        _controller = new(_loggerMock.Object, _torrentsMock.Object, null!, _coordinatorMock.Object);
+        _authenticationMock = new(null!, null!, null!);
+        _controller = new(_loggerMock.Object, _torrentsMock.Object, null!, _coordinatorMock.Object, _authenticationMock.Object);
     }
 
     [Fact]

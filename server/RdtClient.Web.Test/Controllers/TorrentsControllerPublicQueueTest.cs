@@ -1,4 +1,5 @@
 using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Logging;
 using Moq;
@@ -13,6 +14,7 @@ namespace RdtClient.Web.Test.Controllers;
 
 public class TorrentsControllerPublicQueueTest
 {
+    private readonly Mock<Authentication> _authenticationMock;
     private readonly TorrentsController _controller;
     private readonly Mock<IRateLimitCoordinator> _coordinatorMock;
     private readonly Mock<ILogger<TorrentsController>> _loggerMock;
@@ -23,7 +25,17 @@ public class TorrentsControllerPublicQueueTest
         _torrentsMock = new(null!, null!, null!, null!, null!, null!, null!, null!, null!, null!, null!);
         _loggerMock = new();
         _coordinatorMock = new();
-        _controller = new(_loggerMock.Object, _torrentsMock.Object, null!, _coordinatorMock.Object);
+        _authenticationMock = new(null!, null!, null!);
+        _authenticationMock.Setup(a => a.ValidateCredentials("user", "pass"))
+                           .ReturnsAsync(true);
+        _controller = new(_loggerMock.Object, _torrentsMock.Object, null!, _coordinatorMock.Object, _authenticationMock.Object);
+
+        var httpContext = new DefaultHttpContext();
+        httpContext.Request.Headers.Authorization = "Basic dXNlcjpwYXNz";
+        _controller.ControllerContext = new()
+        {
+            HttpContext = httpContext
+        };
     }
 
     [Fact]
@@ -52,6 +64,7 @@ public class TorrentsControllerPublicQueueTest
                              RdName = "Ubuntu ISO",
                              RdSize = 1000,
                              RdProgress = 35,
+                             RdSpeed = 630000,
                              RdStatus = TorrentStatus.Downloading,
                              Downloads =
                              [
@@ -77,7 +90,8 @@ public class TorrentsControllerPublicQueueTest
         Assert.Equal("Ubuntu ISO", item.Name);
         Assert.Equal(1000, item.TotalSizeBytes);
         Assert.Equal(35, item.DownloadedPercent);
-        Assert.Equal("Being downloaded by RealDebrid", item.Status);
+        Assert.Equal(630000, item.CurrentDownloadSpeedBytesPerSecond);
+        Assert.Equal("Downloading Torrent", item.Status);
     }
 
     [Fact]
@@ -122,7 +136,8 @@ public class TorrentsControllerPublicQueueTest
         Assert.Equal("Movie Pack", item.Name);
         Assert.Equal(2000, item.TotalSizeBytes);
         Assert.Equal(25, item.DownloadedPercent);
-        Assert.Equal("Being downloaded from RealDebrid", item.Status);
+        Assert.Equal(500, item.CurrentDownloadSpeedBytesPerSecond);
+        Assert.Equal("Downloading", item.Status);
         Assert.Equal("Downloading", item.RawStatus);
     }
 
@@ -153,6 +168,7 @@ public class TorrentsControllerPublicQueueTest
         Assert.Equal("Ready Torrent", item.Name);
         Assert.Equal(3000, item.TotalSizeBytes);
         Assert.Equal(0, item.DownloadedPercent);
+        Assert.Equal(0, item.CurrentDownloadSpeedBytesPerSecond);
         Assert.Equal("Waiting to download", item.Status);
         Assert.Equal("WaitingForHostDownload", item.RawStatus);
     }
@@ -184,6 +200,7 @@ public class TorrentsControllerPublicQueueTest
         Assert.Equal("Stalled Torrent", item.Name);
         Assert.Equal("Waiting for debrid", item.Status);
         Assert.Equal(42, item.DownloadedPercent);
+        Assert.Equal(0, item.CurrentDownloadSpeedBytesPerSecond);
         Assert.Equal("Processing", item.RawStatus);
     }
 
@@ -228,6 +245,7 @@ public class TorrentsControllerPublicQueueTest
         Assert.Equal("Queued Torrent", item.Name);
         Assert.Equal("Waiting in queue", item.Status);
         Assert.Equal(0, item.DownloadedPercent);
+        Assert.Equal(0, item.CurrentDownloadSpeedBytesPerSecond);
         Assert.Equal("QueuedForHostDownload", item.RawStatus);
     }
 
@@ -281,8 +299,9 @@ public class TorrentsControllerPublicQueueTest
         var item = Assert.Single(queue);
 
         Assert.Equal("Mixed Torrent", item.Name);
-        Assert.Equal("Being downloaded from RealDebrid", item.Status);
+        Assert.Equal("Downloading", item.Status);
         Assert.Equal(50, item.DownloadedPercent);
+        Assert.Equal(1000, item.CurrentDownloadSpeedBytesPerSecond);
         Assert.Equal("Downloading", item.RawStatus);
     }
 
@@ -324,6 +343,7 @@ public class TorrentsControllerPublicQueueTest
         var item = Assert.Single(queue);
 
         Assert.Equal("Active Torrent", item.Name);
+        Assert.Equal(0, item.CurrentDownloadSpeedBytesPerSecond);
         Assert.Equal("Not yet added to provider", item.Status);
     }
 }

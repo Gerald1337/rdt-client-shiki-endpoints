@@ -28,16 +28,20 @@ The backend exposes two authenticated endpoints under `/Api/ShikiDashboard` so t
       "name": "Example.Torrent.S01E01",
       "totalSizeBytes": 2147483648,
       "downloadedPercent": 42.5,
-      "status": "Being downloaded from RealDebrid",
+      "currentDownloadSpeedBytesPerSecond": 1048576,
+      "status": "Downloading",
       "rawStatus": "Downloading"
     }
   ]
   ```
+- **Example curl:**  
+  `curl -H "Authorization: Basic YWRtaW46c2VjcmV0" https://localhost:port/Api/ShikiDashboard/Queue/Public`
 - **Field meanings:**
   - `name`: Display name (`RdName` or fallback to hash).
   - `totalSizeBytes`: Sum of all tracked downloads in bytes (falls back to the provider size when no downloads exist).
   - `downloadedPercent`: Progress between 0 and 100. When the torrent is queued for host download or waiting for files, the percent may remain `0`.
-  - `status`: Friendly text derived from queue state (e.g., “Waiting to download”, “Waiting in queue”, “Being downloaded from RealDebrid”, provider errors, or a default “Waiting for debrid” when nothing is active).
+  - `currentDownloadSpeedBytesPerSecond`: Current download speed in bytes per second. During the debrid torrent phase it uses the same `rdSpeed` value shown in the main UI status text; during local host downloads it sums the active local download speeds.
+  - `status`: Friendly text derived from queue state (e.g., `Downloading`, `Downloading Torrent`, `Waiting to download`, `Waiting in queue`, provider errors, or a default `Waiting for debrid` when nothing is active).
   - `rawStatus`: Low-level state name such as `WaitingForHostDownload`, `QueuedForHostDownload`, `Downloading`, or `Unknown`.
 - **Errors:** `401 Unauthorized` when credentials are missing/bad.
 
@@ -48,6 +52,8 @@ The backend exposes two authenticated endpoints under `/Api/ShikiDashboard` so t
 - **Success response:** `200 OK` with a boolean body:
   - `true` when the magnet was successfully inserted into the queue.
   - `false` when ingestion failed (invalid payload, torrent add error, etc.). The server also logs a warning on failure, but still replies with `false`.
+- **Example curl:**  
+  `curl -H "Authorization: Basic YWRtaW46c2VjcmV0" -H "Content-Type: application/json" -d '{"magnetLink":"magnet:?xt=urn:btih:..."}' https://localhost:port/Api/ShikiDashboard/IngestMagnetLink`
 - **Errors:** `401 Unauthorized` when authentication fails; the endpoint will add the Basic challenge header before returning `401`.
 - **Notes:** Existing default GUI settings (category, download client, retry counts, regex filters, etc.) are applied automatically so that the new torrent behaves exactly like a manual upload.
 

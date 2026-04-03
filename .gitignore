@@ -11,3 +11,4 @@ test.bat
 .localdata
 RdtClient.Web.zip
 RdtClient.Web/*
+.DS_Store
